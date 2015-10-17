@@ -51,19 +51,18 @@ export DESTDIR=$RPM_BUILD_ROOT
 
 %files
 %defattr(-,root,root)
-%dir /opt/nm-plugin-sad/
-%dir /opt/nm-plugin-sad/etc
-%dir /opt/nm-plugin-sad/tmp
-%dir /opt/nm-plugin-sad/bin
-%dir /opt/nm-plugin-sad/templates
-/opt/nm-plugin-sad/bin/vpn_sad
-/etc/NetworkManager/dispatcher.d/zzz_vpn_sad
-%config /opt/nm-plugin-sad/templates/siproxd.conf.tt
-%config (noreplace) /opt/nm-plugin-sad/etc/vpn_sad.cnf
+%dir /opt/%{name}/
+%dir /opt/%{name}/etc
+%dir /opt/%{name}/tmp
+%dir /opt/%{name}/bin
+%dir /opt/%{name}/templates
+/opt/%{name}/bin/vpn_splitdns
+/etc/NetworkManager/dispatcher.d/zzz_vpn_splitdns
+%config (noreplace) /opt/%{name}/etc/vpn_splitdns.cnf
 %doc README.md
 
 %changelog
-* Wed Jul 18 2012 m0ses@samaxi.de
+* Sat Oct 17 2015 m0ses@samaxi.de
 - initial version
 
 
