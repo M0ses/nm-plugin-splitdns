@@ -1,0 +1,282 @@
+#!/usr/bin/env perl
+
+
+use strict;
+use warnings;
+use Config::General;
+use Sys::Syslog qw(:standard :macros);
+use Data::Dumper;
+use FindBin;
+use File::Copy;
+use File::Basename;
+use Path::Class::File;
+use Path::Class::Dir;
+openlog("nm-plugin-splitdns",'ndelay,pid,perror',LOG_USER);
+
+my $cFile = "/opt/nm-plugin-splitdns/etc/vpn_splitdns.cnf";
+
+### Get Arguments
+#
+if (@ARGV < 2 ) {
+	syslog(LOG_CRIT,"Got wrong number of arguments") || print "Error while logging\n";
+	closelog();
+	exit 1;		
+}
+
+my ($interface,$action,$mode) = @ARGV;
+$mode = $mode || '';
+#
+###
+
+###
+# Get config
+if (defined($mode) && $mode eq 'test' ) {
+	$cFile="$FindBin::Bin/../etc/vpn_slitdns.cnf";
+}
+
+syslog(LOG_INFO,"Using config file $cFile");
+my $conf = Config::General->new($cFile);
+my %config = $conf->getall;
+#print Dumper(\%config);
+#
+###
+
+###
+# Checking if action is vpn related
+if ($action !~ /^vpn-(up|down)/ ) {
+	syslog(LOG_INFO,"Action is not for vpn");
+	exit 0;
+}
+
+syslog(LOG_INFO,"Action '$action' called");
+
+#
+###
+
+if ($action eq 'vpn-down') {
+	stop_dns(\%config);
+	exit 0;
+}
+
+my $connected_vpn=get_connected_vpn();
+
+if (! $connected_vpn ) {
+	syslog(LOG_ERR,"Could not get name of connected vpn");
+	exit 2;
+}
+
+if (! $config{vpn}->{$connected_vpn} ) {
+	syslog(LOG_INFO,"no configuration found for vpn '$connected_vpn'");
+	exit 0;
+}
+
+syslog(LOG_INFO,"Using configuration for vpn '$connected_vpn'");
+
+if (! start_dns(\%config,$config{vpn}->{$connected_vpn}) ) {
+	syslog(LOG_ERR,"Error while starting dnsmasq");
+}
+
+exit 0;
+
+################################################################################
+sub start_dns {
+	my ($config,$vc) = @_;
+
+	if ( $vc->{USE_DNSMASQ} !~ /^(y(es)?|1)/ ) {
+		syslog(LOG_INFO,"dnsmasq not enabled ... Returning ...");
+		return 1;
+	}
+
+	my $bin = $config->{dnsmasq}->{DNSMASQ_BIN} || "/usr/sbin/dnsmasq";
+	my $local_dns_ip = $config->{dnsmasq}->{DNS_LOCAL_IP} || '127.0.2.1';
+	my $opt = $config->{dnsmasq}->{DNS_GLOBAL_OPTIONS} . " --listen-address=$local_dns_ip ";
+	my $pid_file = get_pid_file_name($config,'dnsmasq');
+	
+	if (! -x $bin ) {
+		syslog(
+			LOG_ERR,
+			"Could not found dnsmasq binary under $bin
+Please check DNSMASQ_BIN in section dnsmasq in config file $cFile
+			"
+		);
+		return 0;
+	}
+
+	$opt .= get_server_string($vc->{SERVER});
+	
+	my $rsc = get_resolvconf($vc->{SERVER});
+
+	foreach my $ns (@{$rsc->{nameserver}}) {
+		$opt .= " --server=$ns "
+	}
+
+	syslog(LOG_INFO,Dumper($rsc));
+    my $cmd_template="%s";
+    my $run_atd=0;
+    if (getSuseVersion() >= 13.1 ) {
+        $cmd_template = "echo \"%s\" | at now";
+        $run_atd=1;
+    }
+	my $cmd = sprintf($cmd_template,"$bin $opt -x $pid_file");
+	syslog(LOG_DEBUG,"Starting command '$cmd'");
+	# looks quite nasty, but i found no other way
+	# otherwise nm-dispatcher would kill dnsmasq
+	`$cmd` if $mode ne 'test';
+    if ( $run_atd ) {
+        system("/usr/sbin/atd -s");
+    }
+
+	set_resolvconf($local_dns_ip) if ! $?;
+
+	return 1;
+}
+
+################################################################################
+sub get_resolvconf {
+	my $vcServer=shift;
+
+	my $vcs = (ref($vcServer) eq 'ARRAY') ? $vcServer : [$vcServer];
+	my @discardNS = map {
+		my @res = split(/\//,$_); 
+		pop(@res); 
+	} @{$vcs};
+
+	syslog(LOG_DEBUG,"\@discardNS: '@discardNS'");
+
+	my $res={};
+	open(RSC,"/etc/resolv.conf");
+	my @content=<RSC>;
+
+	foreach my $line (@content) {
+		my ($text,$comment)=split(/#/,$line);
+		if ($text =~ /^\s*(nameserver|search)\s+(.*)/ ) {
+			if ($1 eq 'search') {
+				$res->{$1}=$2 
+			} else {
+				 $res->{$1} = ( ref($res->{$1}) eq 'ARRAY' ) 
+					? $res->{$1}
+					: [] ;
+                
+				push(@{$res->{$1}},$2) unless ( grep { $2 eq $_ } @discardNS );
+			}
+		}
+	}
+	close RSC;
+	return $res
+}
+
+################################################################################
+sub set_resolvconf {
+	my $local_dns_ip = shift;
+	my $resolv_conf = Path::Class::File->new("/etc/resolv.conf");
+	my @content = ();
+
+	my $c1=0;
+	foreach my $line ($resolv_conf->slurp) {
+		my ($text,$comment)=split(/#/,$line);
+		my $nstxt;
+		if ($text =~ /^\s*nameserver/ ) {
+			next if $c1;
+			$nstxt = "nameserver $local_dns_ip\n";
+			$c1++;
+		} else {
+			$nstxt = $line;
+		}
+		syslog(LOG_INFO,"Writing to resolv.conf: '$nstxt'");
+		push(@content,$nstxt);
+	}
+	$resolv_conf->spew(iomode => '>:raw',\@content);
+}
+
+################################################################################
+sub stop_dns {
+	my ($config) = @_;
+	my $rcFile = "/etc/resolv.conf";
+
+	syslog(LOG_DEBUG,"Stopping DNS");
+	my $pid_file = get_pid_file_name($config,'dnsmasq');
+	stop_pid($pid_file);
+	
+	if ( getSuseVersion() >= 12.3 ) {
+		syslog(LOG_DEBUG,"Calling 'netconfig update -f'");
+		unlink("/etc/resolv.conf");
+		system("/sbin/netconfig update -f");
+	}
+}
+
+################################################################################
+sub cleanupResolvConfBackups {
+	my $etc = Path::Class::Dir->new('/etc');
+	foreach my $file ($etc->children) {
+		if ( 
+			$file =~ /\/?resolv\.conf\.\d{8}-\d{6}$/ &&
+			-f $file
+		) {
+			unlink($file);
+		}
+	}
+}
+
+################################################################################
+sub getSuseVersion {
+	my $srf = Path::Class::File->new("etc","SuSE-release");
+	my $sv=0;
+	eval {
+		my @srfC = $srf->slurp;
+		map { /^VERSION\s*=\s*([0-9\.]*)\s*/ && { $sv = $1 } } @srfC;
+		
+	};
+	syslog(LOG_DEBUG,"Got SuSE version $sv");
+	return $sv;
+}
+
+################################################################################
+sub get_pid_file_name {
+	my ($config,$section) = @_;
+	my $default_file="/var/run/nm-plugin-sad.$section.pid";
+
+	if ( ref($config->{$section}) ne 'HASH' ) {
+		syslog(LOG_ERR,"Error in config file '$cFile' \$config->{$section} is not a HASH ref");
+		return $default_file;
+	}
+
+	return $config->{$section}->{'PID_FILE'} || $default_file;
+}
+
+################################################################################
+sub stop_pid {
+	my $pid_file = shift;
+        if ( -f $pid_file ) {
+		open(PIDFILE,$pid_file);
+		my $pid = <PIDFILE>;
+		close PIDFILE;
+		syslog(LOG_DEBUG,"Killing $pid");	
+                kill(15,$pid);
+		unlink($pid_file);
+	}
+
+}
+
+################################################################################
+sub get_server_string {
+
+	my $cServ = shift;
+	my $st="";
+
+	return " --server=$cServ " if (ref ($cServ) eq '');
+	
+	map {  $st .= " --server=$_ " } @{$cServ};
+	
+	return $st
+
+}
+
+################################################################################
+sub get_connected_vpn {
+	my @out=`LANG=C nmcli -t -f NAME,TYPE,STATE con show`;
+	foreach (@out){
+		chomp;
+		my ($name,$type,$state)=split(/:/,$_);
+		return $name if ( $type eq 'vpn' and $state eq 'activated' );
+	}
+}

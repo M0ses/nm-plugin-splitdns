@@ -1,0 +1,25 @@
+#<general>
+#	VPN_INTERFACE=vpn0
+#</general>
+#
+#<dnsmasq>
+#	# PID_FILE=/var/run/nm-plugin-sad.dnsmasq.pid
+#	DNSMASQ_BIN=/usr/sbin/dnsmasq
+#	DNS_GLOBAL_OPTIONS=" --bind-interfaces --no-dhcp-interface=lo --except-interface=virbr0 --except-interface=vnet0 --except-interface=eth0 -R " 
+#	DNS_LOCAL_IP="127.0.2.1"
+#</dnsmasq>
+#
+#<vpn>
+#	<WORKVPN>
+#		USE_DNSMASQ=yes
+#		USE_SIPROXD=yes
+#		SERVER=/mywork.com/10.in-addr.arpa./10.0.0.17
+#		SERVER=/mywork.com/10.in-addr.arpa./10.0.0.18
+#	</WORKVPN>
+#	<HomeVPN>
+#		USE_DNSMASQ=yes
+#		USE_SIPROXD=no
+#		SERVER=/168.192.in-addr.arpa./192.168.0.17
+#		SERVER=/myhome.com/192.168.0.17
+#	</HomeVPN>
+#</vpn>
