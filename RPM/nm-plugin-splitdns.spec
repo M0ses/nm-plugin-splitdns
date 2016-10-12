@@ -26,6 +26,10 @@ Source:		%name-%version.tar.gz
 PreReq:		NetworkManager
 
 Requires: dnsmasq
+Requires: perl(Config::General)
+Requires: perl(Path::Class::File)
+Requires: perl(Path::Class::Dir)
+
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 BuildArch:      noarch
