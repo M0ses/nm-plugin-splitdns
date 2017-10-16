@@ -219,11 +219,15 @@ sub cleanupResolvConfBackups {
 
 ################################################################################
 sub getSuseVersion {
-	my $srf = Path::Class::File->new("etc","SuSE-release");
+	my $srf = Path::Class::File->new("etc","os-release");
+        if (! -f $srf) {
+	   syslog(LOG_DEBUG,"Could not find /etc/os-release. Using /etc/SuSE-release");
+	   $srf = Path::Class::File->new("etc","SuSE-release");
+        }
 	my $sv=0;
 	eval {
 		my @srfC = $srf->slurp;
-		map { /^VERSION\s*=\s*([0-9\.]*)\s*/ && { $sv = $1 } } @srfC;
+		map { /^VERSION(?:_ID)?\s*=\s*"?([0-9\.]*)"?\s*/ && { $sv = $1 } } @srfC;
 		
 	};
 	syslog(LOG_DEBUG,"Got SuSE version $sv");
