@@ -112,23 +112,15 @@ Please check DNSMASQ_BIN in section dnsmasq in config file $cFile
 
 	syslog(LOG_INFO,Dumper($rsc));
     my $cmd_template="%s";
-    my $run_atd=0;
-    if (getSuseVersion() >= 13.1 ) {
-        $cmd_template = "echo \"%s\" | at now";
-        $run_atd=1;
-    }
-	my $cmd = sprintf($cmd_template,"$bin $opt -x $pid_file");
-	syslog(LOG_DEBUG,"Starting command '$cmd'");
-	# looks quite nasty, but i found no other way
-	# otherwise nm-dispatcher would kill dnsmasq
-	`$cmd` if $mode ne 'test';
-    if ( $run_atd ) {
-        system("/usr/sbin/atd -s");
-    }
+    my $cmd = sprintf($cmd_template,"$bin $opt -x $pid_file");
+    syslog(LOG_DEBUG,"Starting command '$cmd'");
+    # looks quite nasty, but i found no other way
+    # otherwise nm-dispatcher would kill dnsmasq
+    `$cmd` if $mode ne 'test';
 
-	set_resolvconf($local_dns_ip) if ! $?;
+    set_resolvconf($local_dns_ip) if ! $?;
 
-	return 1;
+    return 1;
 }
 
 ################################################################################
